@@ -1,18 +1,24 @@
 import streamlit as st
-from zhipuai import ZhipuAI
+import requests
 import json
-from supabase import create_client, Client
+from zhipuai import ZhipuAI
 
 # ================= 配置区 =================
 st.set_page_config(page_title="青盾防诈系统", page_icon="🛡️")
 
-# 从 Streamlit Secrets 读取密钥 (确保你在云端后台配置了这三个)
 api_key = st.secrets["ZHIPU_API_KEY"]
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
 client = ZhipuAI(api_key=api_key)
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# 统一构造请求头，确保编码为 utf-8
+headers = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json; charset=utf-8",
+    "Accept": "application/json"
+}
 
 # ================= 页面 =================
 st.title("🛡️ 青盾 - 代际协同防诈系统")
@@ -28,9 +34,18 @@ with tab1:
     if st.button("发送给子女研判", type="primary", use_container_width=True):
         if input_text:
             try:
-                # 写入云端数据库
-                supabase.table("messages").insert({"old_text": input_text, "status": "pending"}).execute()
-                st.success("✅ 已发送！请等待子女的回复...")
+                # 手动构造 POST 请求，明确使用 UTF-8 编码
+                url = f"{SUPABASE_URL}/rest/v1/messages"
+                data = {"old_text": input_text, "status": "pending"}
+                
+                # 关键：使用 json.dumps 并指定 ensure_ascii=False，再编码为 utf-8
+                body = json.dumps(data, ensure_ascii=False).encode('utf-8')
+                
+                resp = requests.post(url, data=body, headers=headers)
+                if resp.status_code == 201:
+                    st.success("✅ 已发送！请等待子女的回复...")
+                else:
+                    st.error(f"发送失败：{resp.text}")
             except Exception as e:
                 st.error(f"发送失败：{e}")
         else:
@@ -39,11 +54,15 @@ with tab1:
     st.markdown("---")
     st.subheader("📬 子女的回复：")
     
-    # 手机端每次刷新，都去云端找最近一条已回复的数据
     try:
-        res = supabase.table("messages").select("*").eq("status", "replied").order("id", desc=True).limit(1).execute()
-        if res.data:
-            st.success(f"子女回复：{res.data[0]['ai_reply']}")
+        url = f"{SUPABASE_URL}/rest/v1/messages?status=eq.replied&order=id.desc&limit=1"
+        resp = requests.get(url, headers=headers)
+        data = resp.json()
+        
+        if data:
+            # 手动解码，确保中文正常显示
+            reply_text = data[0]['ai_reply'].encode('utf-8').decode('utf-8')
+            st.success(f"子女回复：{reply_text}")
         else:
             st.info("等待回复中... (如果刚刚发送，请稍等几秒钟)")
     except Exception as e:
@@ -53,12 +72,16 @@ with tab1:
 with tab2:
     st.header("待处理的求助")
     
-    # 电脑端每次刷新，都去云端找最近一条待处理的数据
     latest_msg = None
     try:
-        res = supabase.table("messages").select("*").eq("status", "pending").order("id", desc=True).limit(1).execute()
-        if res.data:
-            latest_msg = res.data[0]
+        url = f"{SUPABASE_URL}/rest/v1/messages?status=eq.pending&order=id.desc&limit=1"
+        resp = requests.get(url, headers=headers)
+        data = resp.json()
+        
+        if data:
+            # 手动解码，确保中文正常显示
+            latest_msg = data[0]
+            latest_msg['old_text'] = latest_msg['old_text'].encode('utf-8').decode('utf-8')
     except Exception as e:
         st.error(f"读取数据失败：{e}")
     
@@ -83,8 +106,12 @@ with tab2:
                     st.write("👇 **建议回复长辈的话：**")
                     st.code(result_json['reply'], language="text")
                     
-                    # 更新数据库状态
-                    supabase.table("messages").update({"status": "replied", "ai_reply": result_json['reply']}).eq("id", latest_msg['id']).execute()
+                    # 手动构造 PATCH 请求更新数据库
+                    url = f"{SUPABASE_URL}/rest/v1/messages?id=eq.{latest_msg['id']}"
+                    data = {"status": "replied", "ai_reply": result_json['reply']}
+                    body = json.dumps(data, ensure_ascii=False).encode('utf-8')
+                    
+                    resp = requests.patch(url, data=body, headers=headers)
                     st.success("✅ 已发送给长辈！")
                     
                 except Exception as e:
