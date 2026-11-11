@@ -2,6 +2,9 @@ import streamlit as st
 from zhipuai import ZhipuAI
 import json
 from supabase import create_client, Client
+import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # ================= 配置区 =================
 st.set_page_config(page_title="青盾防诈系统", page_icon="🛡️")
