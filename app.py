@@ -1,25 +1,45 @@
 import streamlit as st
-import requests
 import json
+import urllib.request
+import urllib.parse
 from zhipuai import ZhipuAI
 
 # ================= 配置区 =================
 st.set_page_config(page_title="青盾防诈系统", page_icon="🛡️")
 
-# 读取环境变量
 api_key = st.secrets["ZHIPU_API_KEY"]
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
 client = ZhipuAI(api_key=api_key)
 
-# 统一构造请求头
-headers = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json; charset=utf-8",
-    "Accept": "application/json"
-}
+# 自定义底层网络请求函数
+def make_request(url, method="GET", data=None):
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json; charset=utf-8",
+        "Accept": "application/json",
+        "Accept-Charset": "utf-8"
+    }
+    
+    req_data = None
+    if data:
+        # 强行将其转为 utf-8 字节流
+        req_data = json.dumps(data, ensure_ascii=False).encode('utf-8')
+        
+    req = urllib.request.Request(url, data=req_data, headers=headers, method=method)
+    
+    try:
+        with urllib.request.urlopen(req) as response:
+            # 强行用 utf-8 解码读取到的字节流，抛弃系统默认编码
+            raw_bytes = response.read()
+            if raw_bytes:
+                return json.loads(raw_bytes.decode('utf-8'))
+            return None
+    except urllib.error.HTTPError as e:
+        error_msg = e.read().decode('utf-8')
+        raise Exception(f"HTTP {e.code}: {error_msg}")
 
 # ================= 页面 =================
 st.title("🛡️ 青盾 - 代际协同防诈系统")
@@ -37,13 +57,8 @@ with tab1:
             try:
                 url = f"{SUPABASE_URL}/rest/v1/messages"
                 data = {"old_text": input_text, "status": "pending"}
-                
-                # 直接用 json=data，避免手动编码问题
-                resp = requests.post(url, json=data, headers=headers)
-                if resp.status_code == 201:
-                    st.success("✅ 已发送！请等待子女的回复...")
-                else:
-                    st.error(f"发送失败：{resp.text}")
+                make_request(url, method="POST", data=data)
+                st.success("✅ 已发送！请等待子女的回复...")
             except Exception as e:
                 st.error(f"发送失败：{e}")
         else:
@@ -51,20 +66,15 @@ with tab1:
 
     st.markdown("---")
     st.subheader("📬 子女的回复：")
-    
     try:
         url = f"{SUPABASE_URL}/rest/v1/messages?status=eq.replied&order=id.desc&limit=1"
-        resp = requests.get(url, headers=headers)
-        
-        # 【核心修复】强制使用 utf-8 解码原始字节流
-        data = json.loads(resp.content.decode('utf-8'))
-        
+        data = make_request(url, method="GET")
         if data:
             st.success(f"子女回复：{data[0]['ai_reply']}")
         else:
             st.info("等待回复中... (如果刚刚发送，请稍等几秒钟)")
-    except Exception as e:
-        pass # 忽略手机端读取错误，避免干扰页面
+    except Exception:
+        pass
 
 # ---------------- 青年研判端（电脑） ----------------
 with tab2:
@@ -73,11 +83,7 @@ with tab2:
     latest_msg = None
     try:
         url = f"{SUPABASE_URL}/rest/v1/messages?status=eq.pending&order=id.desc&limit=1"
-        resp = requests.get(url, headers=headers)
-        
-        # 【核心修复】强制使用 utf-8 解码原始字节流
-        data = json.loads(resp.content.decode('utf-8'))
-        
+        data = make_request(url, method="GET")
         if data:
             latest_msg = data[0]
     except Exception as e:
@@ -104,20 +110,13 @@ with tab2:
                     st.write("👇 **建议回复长辈的话：**")
                     st.code(result_json['reply'], language="text")
                     
-                    # 更新数据库状态
+                    # 更新状态
                     url = f"{SUPABASE_URL}/rest/v1/messages?id=eq.{latest_msg['id']}"
                     update_data = {"status": "replied", "ai_reply": result_json['reply']}
+                    make_request(url, method="PATCH", data=update_data)
                     
-                    # 同样使用 json=update_data
-                    resp = requests.patch(url, json=update_data, headers=headers)
-                    
-                    if resp.status_code in [200, 204]:
-                        st.success("✅ 已发送给长辈！")
-                    else:
-                        st.error(f"状态更新失败：{resp.text}")
-                    
+                    st.success("✅ 已发送给长辈！")
                 except Exception as e:
                     st.error(f"分析失败：{e}")
-                    
     else:
         st.write("当前暂无待处理求助。")
