@@ -131,7 +131,11 @@ def render_desk():
         st.code(draft, language="text")
         for rep in r.get("replies") or []:
             st.write(f"↩️ 已回复：{rep['content']}")
-        final = st.text_input("最终回复内容", key=f"in{r['id']}", value=draft)
+                in_key = f"in{r['id']}"
+        if in_key not in st.session_state:
+            st.session_state[in_key] = draft
+        final = st.text_input("最终回复内容", key=in_key)
+
         c1, c2 = st.columns(2)
         if c1.button("📤 确认并发送给长辈", key=f"s{r['id']}") and final.strip():
             supabase.table("replies").insert({
