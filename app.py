@@ -57,15 +57,17 @@ def render_elder():
     input_text = st.text_area("请将可疑短信或链接粘贴到这里：", height=150)
     if st.button("发送给子女研判", type="primary", use_container_width=True):
         if input_text.strip():
-            supabase.table("requests").insert({
-                "elder_uid": st.session_state.elder_uid,
-                "elder_name": st.session_state.get("elder_name", "家人"),
-                "content": input_text,
-            }).execute()
-            push_wechat(st.session_state.get("elder_name", "家人"))
-            st.success("✅ 已发送！请等待子女的回复... 在那之前：先别转账、别报验证码。")
-        else:
-            st.warning("请先输入可疑内容哦！")
+            try:
+                supabase.table("requests").insert({
+                    "elder_uid": st.session_state.elder_uid,
+                    "elder_name": st.session_state.get("elder_name", "家人"),
+                    "content": input_text,
+                }).execute()
+                push_wechat(st.session_state.get("elder_name", "家人"))
+                st.success("✅ 已发送！请等待子女的回复... 在那之前：先别转账、别报验证码。")
+            except Exception as e:
+                st.error(f"写入失败，真实原因：{e}")
+
 
     st.markdown("---")
     st.subheader("📬 子女的回复：")
