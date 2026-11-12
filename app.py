@@ -13,9 +13,16 @@ PUSHPLUS_TOKEN = st.secrets.get("PUSHPLUS_TOKEN", "")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 client = ZhipuAI(api_key=ZHIPU_API_KEY) if ZHIPU_API_KEY else None
 
-# ================= AI 研判（沿用你初版风格） =================
+# 关键修复：脚本每次重跑都恢复登录状态
+if st.session_state.get("access_token"):
+    try:
+        supabase.auth.set_session(
+            st.session_state["access_token"], st.session_state["refresh_token"])
+    except Exception:
+        pass
+
+# ================= AI 研判（沿用初版风格） =================
 def ai_analyze(content: str) -> tuple[str, str]:
-    """返回 (风险等级, 建议回复)。AI 不可用时自动降级为关键词规则，永不停摆。"""
     if client:
         try:
             resp = client.chat.completions.create(
@@ -28,13 +35,13 @@ def ai_analyze(content: str) -> tuple[str, str]:
             )
             s = resp.choices[0].message.content.replace("```json", "").replace("```", "").strip()
             j = json.loads(s)
-            return j.get("risk_level", "中"), (j.get("reply") or FALLBACK_REPLY).strip()
+            return j.get("risk_level", "中"), (j.get("reply") or "先别操作，等我确认。").strip()
         except Exception:
-            pass  # 网络/额度问题 → 走关键词兜底
+            pass
     hits = [w for w in ["转账", "汇款", "打钱", "安全账户", "验证码", "公检法",
-                        "刷单", "解冻", "屏幕共享", "中奖", "退款", "银行卡"] if w in content]
+                        "刷单", "解冻", "屏幕共享", "中奖", "退款", "银行卡", "卡号", "领奖"] if w in content]
     if hits:
-        return "高风险", f"这条提到了{'、'.join(hits[:3])}，八成是骗子。先别转账、别报验证码，把电话挂了等我。"
+        return "高风险", f"这条提到了{'、'.join(hits[:3])}，八成是骗子。先别转账、别给卡号和验证码，把电话挂了等我。"
     return "中", "先别点这个链接、别扫码。截图发给我，我确认完你再操作。"
 
 def push_wechat(elder_name: str):
@@ -53,6 +60,8 @@ def render_elder():
     if "elder_uid" not in st.session_state:
         res = supabase.auth.sign_in_anonymously()
         st.session_state.elder_uid = res.user.id
+        st.session_state.access_token = res.session.access_token
+        st.session_state.refresh_token = res.session.refresh_token
 
     input_text = st.text_area("请将可疑短信或链接粘贴到这里：", height=150)
     if st.button("发送给子女研判", type="primary", use_container_width=True):
@@ -66,8 +75,9 @@ def render_elder():
                 push_wechat(st.session_state.get("elder_name", "家人"))
                 st.success("✅ 已发送！请等待子女的回复... 在那之前：先别转账、别报验证码。")
             except Exception as e:
-                st.error(f"写入失败，真实原因：{e}")
-
+                st.error(f"写入失败：{e}")
+        else:
+            st.warning("请先输入可疑内容哦！")
 
     st.markdown("---")
     st.subheader("📬 子女的回复：")
@@ -82,7 +92,7 @@ def render_elder():
     if rows:
         st.button("🔄 看看子女回了没", use_container_width=True)
 
-# ================= 青年研判端（只有你能进） =================
+# ================= 青年研判端 =================
 def render_desk():
     if not st.session_state.get("desk_uid"):
         st.title("🛡️ 子女端登录")
@@ -93,6 +103,8 @@ def render_desk():
                 try:
                     res = supabase.auth.sign_in_with_password({"email": email, "password": pw})
                     st.session_state.desk_uid = res.user.id
+                    st.session_state.access_token = res.session.access_token
+                    st.session_state.refresh_token = res.session.refresh_token
                     st.rerun()
                 except Exception:
                     st.error("账号或密码不对")
@@ -111,14 +123,12 @@ def render_desk():
     for r in rows:
         st.markdown(f"### 📩 {r['elder_name']}　`{r['status']}`　{r['created_at'][:19]}")
         st.info(r["content"])
-
-        if r["id"] not in st.session_state.drafts:      # 每条只分析一次
+        if r["id"] not in st.session_state.drafts:
             st.session_state.drafts[r["id"]] = ai_analyze(r["content"])
         risk, draft = st.session_state.drafts[r["id"]]
         (st.error if risk == "高风险" else st.warning)(f"🚨 风险等级：{risk}")
         st.write("👇 **建议回复长辈的话（可修改）：**")
         st.code(draft, language="text")
-
         for rep in r.get("replies") or []:
             st.write(f"↩️ 已回复：{rep['content']}")
         final = st.text_input("最终回复内容", key=f"in{r['id']}", value=draft)
