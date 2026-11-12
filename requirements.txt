@@ -1,4 +1,5 @@
 streamlit
+supabase>=2.0.0
 zhipuai
-sniffio
-supabase
+requests
+
