@@ -2,4 +2,8 @@ streamlit
 supabase>=2.0.0
 zhipuai
 requests
+sniffio
+httpx
+anyio
+
 
