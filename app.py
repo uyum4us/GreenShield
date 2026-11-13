@@ -2,7 +2,11 @@ import streamlit as st
 import json
 import requests
 from supabase import create_client
-from zhipuai import ZhipuAI
+try:
+    from zhipuai import ZhipuAI
+except Exception:
+    ZhipuAI = None
+
 
 # ================= 配置区（Secrets） =================
 st.set_page_config(page_title="青盾防诈系统", page_icon="🛡️")
@@ -11,7 +15,8 @@ SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]
 ZHIPU_API_KEY = st.secrets.get("ZHIPU_API_KEY", "")
 PUSHPLUS_TOKEN = st.secrets.get("PUSHPLUS_TOKEN", "")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-client = ZhipuAI(api_key=ZHIPU_API_KEY) if ZHIPU_API_KEY else None
+client = ZhipuAI(api_key=ZHIPU_API_KEY) if ZHIPU_API_KEY and ZhipuAI else None
+
 
 # 关键修复：脚本每次重跑都恢复登录状态
 if st.session_state.get("access_token"):
