@@ -302,3 +302,12 @@ if mode == "desk":
     render_desk()
 else:
     render_elder()
+# ================= APP 化外观（隐藏网页痕迹，配合“添加到主屏幕”使用） =================
+st.markdown("""
+<style>
+    #MainMenu, footer, header {display: none;}
+    [data-testid="stHeader"], [data-testid="stToolbar"],
+    [data-testid="stStatusWidget"], [data-testid="stDecoration"] {display: none;}
+    .block-container {padding-top: 1.2rem; padding-bottom: 2rem; max-width: 720px;}
+</style>
+""", unsafe_allow_html=True)
