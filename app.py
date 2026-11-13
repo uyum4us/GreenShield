@@ -25,27 +25,33 @@ client = ZhipuAI(api_key=ZHIPU_API_KEY) if (ZHIPU_API_KEY and ZhipuAI) else None
 cookies = stx.CookieManager(key="qs_cookies")
 COOKIE_DAYS = 365
 
-# Cookie 组件第一次运行时读不到值，先等一轮再继续
-if cookies.get_all() is None and not st.session_state.get("ck_ready"):
-    st.session_state.ck_ready = True
+# 关键：Cookie 组件在页面刚打开时还没回传数据，必须先空跑一轮，
+# 否则会把「还没读到」误判成「没有身份」，于是每次都新建一个身份，历史永远为空。
+if not st.session_state.get("ck_settled"):
+    st.session_state.ck_settled = True
+    st.rerun()
+
+# 再兜一层：组件仍没准备好就多等一轮（最多 4 次）
+if cookies.get_all() is None and st.session_state.get("ck_wait", 0) < 4:
+    st.session_state.ck_wait = st.session_state.get("ck_wait", 0) + 1
     st.rerun()
 
 
 def save_cookie(name: str, value: str) -> None:
     try:
-        cookies.set(name, value,
+        cookies.set(name, value, path="/",
                     expires_at=datetime.now(timezone.utc) + timedelta(days=COOKIE_DAYS))
     except Exception:
         pass
 
 
 def ensure_auth(cookie_name: str, role: str):
-    """恢复登录：优先内存令牌，其次 Cookie 里的 refresh_token。返回 uid 或 None。"""
+    """恢复登录：优先内存令牌，其次 Cookie 里的 refresh_token。返回 (uid, 来源)。"""
     if st.session_state.get("access_token") and st.session_state.get("auth_role") == role:
         try:
             supabase.auth.set_session(st.session_state["access_token"],
                                       st.session_state["refresh_token"])
-            return st.session_state.get("auth_uid")
+            return st.session_state.get("auth_uid"), "memory"
         except Exception:
             st.session_state.pop("access_token", None)
 
@@ -59,10 +65,10 @@ def ensure_auth(cookie_name: str, role: str):
             st.session_state.auth_uid = res.user.id
             st.session_state.auth_role = role
             save_cookie(cookie_name, f"{res.user.id}|{res.session.refresh_token}")
-            return res.user.id
+            return res.user.id, "cookie"
         except Exception:
-            pass
-    return None
+            st.session_state.ck_lost = True
+    return None, None
 
 
 # ================= AI 研判 =================
@@ -104,7 +110,7 @@ def render_elder():
     st.title("🛡️ 青盾 · 一键求助")
     st.write("遇到可疑信息？发给子女看看")
 
-    uid = ensure_auth("qs_elder", "elder")
+    uid, source = ensure_auth("qs_elder", "elder")
     if not uid:
         try:
             res = supabase.auth.sign_in_anonymously()
@@ -117,6 +123,14 @@ def render_elder():
         st.session_state.access_token = res.session.access_token
         st.session_state.refresh_token = res.session.refresh_token
         save_cookie("qs_elder", f"{uid}|{res.session.refresh_token}")
+        source = "new"
+
+    # 这一行是排错用的：说明这台设备这次到底是「老身份」还是「新身份」
+    if source == "new":
+        st.caption(f"设备身份 {uid[:8]} · 首次登记"
+                   + (" · 之前身份恢复失败" if st.session_state.get("ck_lost") else ""))
+    else:
+        st.caption(f"设备身份 {uid[:8]} · 已恢复（历史记录可见）")
 
     saved_name = cookies.get("qs_name") or "家人"
     elder_name = st.text_input("怎么称呼你", value=saved_name)
@@ -168,7 +182,7 @@ def render_elder():
 
 # ================= 青年研判端 =================
 def render_desk():
-    uid = ensure_auth("qs_desk", "desk")
+    uid, _ = ensure_auth("qs_desk", "desk")
     if not uid:
         st.title("🛡️ 子女端登录")
         with st.form("login"):
