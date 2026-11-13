@@ -5,5 +5,7 @@ requests
 sniffio
 httpx
 anyio
+extra-streamlit-components
+
 
 
